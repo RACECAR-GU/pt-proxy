@@ -62,6 +62,13 @@ def parse_args():
         dest='bridgeinfo',
         help='bridge-specific information (e.g., cert=ssH+9rP8dG2NLDN2XuFw63hIO/9MNNinLmxQDpVa+7kTOa9/m+tGWT1SmSYpQ9uTBGa6Hw;iat-mode=0).  You should probably escape this argument.',
         )
+    parser_client.add_argument(
+        '-p', '--port',
+        dest='port',
+        help='local proxy port to spin up (this is what you point your browser, etc., towards)',
+        type=int,
+        default=9999,
+        )
     
     parser_server.add_argument(
         '-S', '--bind',
@@ -182,30 +189,27 @@ def launch_pt_binary( args ):
 listen on a local port, and relay all communication sent to/from
 this port to our PT
 """
-def launch_client_listener_service( pt_sock ):
+def launch_client_listener_service( pt_sock, port ):
     logger = logging.getLogger('pt-proxy-client')        
     try:
         s = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
-        s.bind( ('localhost', 0))
-        port = s.getsockname()[1]
+        s.bind( ('localhost', port))
         logger.info( 'pt-proxy.py is bound on port %d (set your proxy to be localhost:%d)' % (port,port) )
+        s.listen(1)
 
-        connected_clients = []
+        # TODO: fix this.  need to cycle back after connection closes
+        (client_socket, address) = s.accept()        
+        logger.info( 'connection opened from %s' % str(address) )
         
         while True:
-            rlist = [s,pt_sock] + connected_clients
+            rlist = [client_socket,pt_sock]
             (rready, _, _) = select.select( rlist, [], [] )
-            if s in rready:               # we have a connecting client
-                (clientsocket, address) = s.accept()
-                logger.info( 'connection opened from %s' % address )
-                connected_clients += [clientsocket]
+            if client_socket in rready:           # there's data from the browser
+                data = client_socket.recv(4096)
+                pt_sock.send(data)
             if pt_sock in rready:         # there's data from the PT
-                data = pt_sock.read()
-                c.write(data)
-            for c in connected_clients:
-                if c in rready:           # there's data from the browser
-                    data = c.read()
-                    pt_sock.write(data)
+                data = pt_sock.recv(4096)
+                client_socket.send(data)
                     
     except KeyboardInterrupt:
         s.close()
@@ -231,7 +235,7 @@ def main( args ):
     
     pt_sock = launch_pt_binary(args)
     if args.command == 'client':
-        launch_client_listener_service( pt_sock )
+        launch_client_listener_service( pt_sock, args.port )
     elif args.command == 'server':
         logger.info( 'server mode activated. will wait here indefinitely.' )
         while True: time.sleep(1)
