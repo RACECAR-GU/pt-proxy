@@ -4,6 +4,8 @@ and communicates all TCP traffic via a Tor Pluggable Transport (e.g., obfs4).
 
 by Micah Sherr <msherr@cs.georgetown.edu>
 
+
+Note: the Tor PT spec is at https://gitweb.torproject.org/torspec.git/tree/pt-spec.txt
 """
 
 import logging
@@ -24,8 +26,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-c', '--client', dest='clientmode', action='store_true')
-    group.add_argument('-s', '--server', dest='servermode', action='store_false')
+    group.add_argument('-c', '--client', dest='clientmode', action='store_true', help='run in client mode')
+    group.add_argument('-s', '--server', dest='servermode', action='store_true', help='run in server mode')
     
     parser.add_argument(
         '-l', '--logfile',
@@ -40,7 +42,7 @@ def parse_args():
         required = True
         )
     parser.add_argument(
-        '-p', '--pttype',
+        '-t', '--pttype',
         dest='pttype',
         help='pluggable transport type (defaults to obfs4)',
         default='obfs4'
@@ -48,7 +50,19 @@ def parse_args():
     parser.add_argument(
         '-B', '--bridge',
         dest='bridge',
-        help='IP and port of a bridge (e.g., 1.2.3.4:443)',
+        help='for client mode: IP and port of a remote bridge (e.g., 1.2.3.4:443)',
+        )
+    parser.add_argument(
+        '-S', '--bind',
+        dest='bind',
+        help='for server mode: IP and port to bind to (e.g., 1.2.3.4:443)',
+        )
+    parser.add_argument(
+        '-p', '--port',
+        dest='port',
+        help='for server mode: port of locally running proxy (e.g., tinyproxy)',
+        type=int,
+        default=8080,
         )
     parser.add_argument(
         '-i', '--info',
@@ -57,24 +71,26 @@ def parse_args():
         required=True
         )
 
-
     args = parser.parse_args()
 
+    # some additional checks
     if args.clientmode is True and args.bridge is None:
         print( 'client mode requires bridge (--bridge) to be specified' )
         exit(1)
+    if args.servermode is True:
+        if args.bind is None:
+            print( 'server mode requires binding address (-S) to be specified' )
+            exit(1)
+        if args.port is None:
+            print( 'server mode requires port (-p) to be specified' )
+            exit(1)
+            
 
     return args
 
 
 
 class PTConnectError(Exception):
-    """Exception raised for errors in the input.
-
-    Attributes:
-        message -- explanation of the error
-    """
-
     def __init__(self, message):
         self.message = message
 
@@ -103,7 +119,8 @@ def launch_pt_binary( args ):
     if args.servermode:
         os.environ['TOR_PT_SERVER_TRANSPORTS'] = args.pttype
         os.environ['TOR_PT_SERVER_TRANSPORT_OPTIONS'] = '%s:%s' % (args.pttype,args.bridgeinfo)
-        # TODO: more work here.
+        os.environ['TOR_PT_SERVER_BINDADDR'] = "%s-%s" % (args.pttype,args.bind)
+        os.environ['TOR_PT_ORPORT' = '127.0.0.1:%d' % args.port
 
     try:
         proc = subprocess.Popen(
@@ -118,6 +135,7 @@ def launch_pt_binary( args ):
             bufsize = 1                   # line buffered
             )
 
+        # TODO: update this logic... seems to be client specific
         try:
             # read from PT to get CMETHOD output (written to its stdout)
             # and then parse output to get correct port
@@ -134,7 +152,7 @@ def launch_pt_binary( args ):
         except PTConnectError as e:
             logger.error( 'could not connect to PT SOCKS proxy: %s' % e )
             proc.kill()
-            return
+            return None
         
         logger.info( 'PT is running %s on %s:%d' % (proto,addr,port) )
         
