@@ -51,6 +51,18 @@ def parse_args():
 
 
 
+class PTConnectError(Exception):
+    """Exception raised for errors in the input.
+
+    Attributes:
+        message -- explanation of the error
+    """
+
+    def __init__(self, message):
+        self.message = message
+
+
+
 """
 launches the Tor Pluggable Transport and returns a filehandle to be
 used to communicate with the other endpoint
@@ -65,44 +77,52 @@ def launch_pt_binary( args ):
     
     os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
     os.environ['TOR_PT_STATE_LOCATION'] = tmpdir
-    os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '1'
+    os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
     os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
 
     try:
         proc = subprocess.Popen(
-            [args.ptbinary],
-            stdin = subprocess.PIPE,
+            [
+                args.ptbinary,
+                "-enableLogging",
+                "-logLevel", "DEBUG",
+            ],
+            stdin = subprocess.DEVNULL,
             stdout = subprocess.PIPE,
-            stderr = sys.stdout
+            stderr = subprocess.PIPE,
+            bufsize = 1                   # line buffered
             )
-        outs, errs = proc.communicate(timeout=15)
 
-        # parse output to get correct port
-        m = re.search(b'CMETHOD (.*) (.*) (.*):([0-9]+)\n', outs, re.MULTILINE)
-        if not m:
-            logger.error( 'could not find proxy port and IP from PT' )
-            proc.kill()
-            return
-        transport = m.group(1).decode()
-        proto = m.group(2).decode()
-        addr = m.group(3).decode()
-        port = int(m.group(4).decode())
-        if proto != "socks5":
-            logger.error( 'doh! I only know how to speak socks5, not %s' % proto )
-            proc.kill()
-            return
-        if transport != args.pttype:
-            logger.error( 'invalid PT type: %s vs %s', transport, args.pttype )
+        try:
+            # read from PT to get CMETHOD output (written to its stdout)
+            # and then parse output to get correct port
+            if b'VERSION 1' not in proc.stdout.readline(): raise PTConnectError('wrong version')
+            method = proc.stdout.readline()
+            m = re.search(b'CMETHOD (.*) (.*) (.*):([0-9]+)\n', method, re.MULTILINE)
+            if not m: raise PTConnectError('could not find proxy port and IP from PT: %s' % out )
+            transport = m.group(1).decode()
+            proto = m.group(2).decode()
+            addr = m.group(3).decode()
+            port = int(m.group(4).decode())
+            if proto != "socks5": raise PTConnectError( 'I only know how to speak socks5, not %s' % proto )
+            if transport != args.pttype: raise PTConnectError( 'invalid PT type: %s vs %s', transport, args.pttype )
+        except PTConnectError as e:
+            logger.error( 'could not connect to PT SOCKS proxy: %s' % e )
             proc.kill()
             return
         
         logger.info( 'PT is running %s on %s:%d' % (proto,addr,port) )
         
-        # TODO: authenticate to it
         s = socks.socksocket()
-        s.set_proxy(socks.SOCKS5, addr, port, username='cert=sjVM7v2cpvtw4GLWaP+TEVUeEhld07iGa8AqEYQk3IHIbtr0Rpiqw6weoKMcnZEZ1+pmFQ;iat-mode=0')
-        # Can be treated identical to a regular socket object
-        s.connect(("209.148.46.65", 443))   # TODO: DONT HARDCODE THIS
+        try:
+            # authenticate to it
+            s.set_proxy(socks.SOCKS5, addr, port, username='cert=sjVM7v2cpvtw4GLWaP+TEVUeEhld07iGa8AqEYQk3IHIbtr0Rpiqw6weoKMcnZEZ1+pmFQ;iat-mode=0',password='')
+            s.connect(("209.148.46.65", 443))   # TODO: DONT HARDCODE THIS
+        except socks.ProxyConnectionError as e:
+            logger.error( 'cannot connect to proxy: %s' % e )
+            time.sleep(200)
+            proc.kill()
+            return None
         #s.sendall("GET / HTTP/1.1 ...")
         #print(s.recv(4096))
 
