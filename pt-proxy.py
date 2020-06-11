@@ -97,7 +97,13 @@ def launch_pt_binary( args ):
     os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
     os.environ['TOR_PT_STATE_LOCATION'] = tmpdir
     os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
-    os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
+
+    if args.clientmode:
+        os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
+    if args.servermode:
+        os.environ['TOR_PT_SERVER_TRANSPORTS'] = args.pttype
+        os.environ['TOR_PT_SERVER_TRANSPORT_OPTIONS'] = '%s:%s' % (args.pttype,args.bridgeinfo)
+        # TODO: more work here.
 
     try:
         proc = subprocess.Popen(
