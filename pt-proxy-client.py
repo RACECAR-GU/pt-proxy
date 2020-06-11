@@ -1,3 +1,11 @@
+"""
+In client mode, this code pretends to be a local proxy (SOCKS or otherwise) 
+and communicates all TCP traffic via a Tor Pluggable Transport (e.g., obfs4). 
+
+by Micah Sherr <msherr@cs.georgetown.edu>
+
+"""
+
 import logging
 import os
 import sys
@@ -11,13 +19,18 @@ import re
 import socks
 
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-c', '--client', dest='clientmode', action='store_true')
+    group.add_argument('-s', '--server', dest='servermode', action='store_false')
     
     parser.add_argument(
-        '-c', '--ptclient',
-        dest="ptclient",
-        help="path to PT client proxy (e.g., /usr/bin/obfs4proxy)",
+        '-b', '--binary',
+        dest="ptbinary",
+        help="path to PT proxy (e.g., /usr/bin/obfs4proxy)",
         required = True
         )
     parser.add_argument(
@@ -37,8 +50,13 @@ def parse_args():
     return args
 
 
-    
-def launch_pt_client( args ):
+
+"""
+launches the Tor Pluggable Transport and returns a filehandle to be
+used to communicate with the other endpoint
+"""
+def launch_pt_binary( args ):
+    global proc
     logger = logging.getLogger('pt-proxy-client')        
     logger.info( 'launch PT client' )
 
@@ -52,7 +70,7 @@ def launch_pt_client( args ):
 
     try:
         proc = subprocess.Popen(
-            [args.ptclient],
+            [args.ptbinary],
             stdin = subprocess.PIPE,
             stdout = subprocess.PIPE,
             stderr = sys.stdout
@@ -81,15 +99,15 @@ def launch_pt_client( args ):
         logger.info( 'PT is running %s on %s:%d' % (proto,addr,port) )
         
         # TODO: authenticate to it
-
         s = socks.socksocket()
         s.set_proxy(socks.SOCKS5, addr, port, username='cert=sjVM7v2cpvtw4GLWaP+TEVUeEhld07iGa8AqEYQk3IHIbtr0Rpiqw6weoKMcnZEZ1+pmFQ;iat-mode=0')
         # Can be treated identical to a regular socket object
-        s.connect(("209.148.46.65", 443))
-        s.sendall("GET / HTTP/1.1 ...")
-        print(s.recv(4096))
-        
-        proc.kill()
+        s.connect(("209.148.46.65", 443))   # TODO: DONT HARDCODE THIS
+        #s.sendall("GET / HTTP/1.1 ...")
+        #print(s.recv(4096))
+
+        return s
+#        proc.kill()
         
     except FileNotFoundError as e:
         logger.error( 'error launching PT: %s', e )
@@ -102,7 +120,7 @@ def launch_pt_client( args ):
 listen on a local port, and relay all communication sent to/from
 this port to our PT
 """
-def launch_listener_service():
+def launch_client_listener_service( pt_sock ):
     logger = logging.getLogger('pt-proxy-client')        
     try:
         s = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
@@ -122,7 +140,7 @@ def launch_listener_service():
             for c in connected_clients:
                 if c in rready:
                     data = c.read()
-                    # TODO: do something with the data
+                    pt_sock.write(data)
                     
     except KeyboardInterrupt:
         s.close()
@@ -130,6 +148,8 @@ def launch_listener_service():
 
   
 def main( args ):
+    global proc
+    
     # set up logging
     FORMAT = '%(asctime)-15s %(name)s - %(levelname)s - %(message)s'
     logging.basicConfig(
@@ -144,10 +164,15 @@ def main( args ):
 
     logger.info( "running with arguments: %s" % args )
     
-    launch_pt_client(args)
+    pt_sock = launch_pt_binary(args)
+    if pt_sock != None:
+        if args.clientmode is True:
+            launch_client_listener_service( pt_sock )
+
+    proc.kill()
+    exit( 0 )                             # all's well that ends well
 
     
- 
 if __name__== "__main__":
     main(parse_args())
     
