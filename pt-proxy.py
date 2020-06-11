@@ -72,7 +72,7 @@ def launch_pt_binary( args ):
     logger = logging.getLogger('pt-proxy-client')        
     logger.info( 'launch PT client' )
 
-    tmpdir = tempfile.mkdtemp()
+    tmpdir = "/tmp/micah" #tempfile.mkdtemp()
     logger.info( 'PT will keep state in %s', tmpdir )
     
     os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
@@ -116,18 +116,16 @@ def launch_pt_binary( args ):
         s = socks.socksocket()
         try:
             # authenticate to it
-            s.set_proxy(socks.SOCKS5, addr, port, username='cert=sjVM7v2cpvtw4GLWaP+TEVUeEhld07iGa8AqEYQk3IHIbtr0Rpiqw6weoKMcnZEZ1+pmFQ;iat-mode=0',password='')
+            s.set_proxy(socks.SOCKS5, addr, port, username='cert=ssH+9rP8dG2NLDN2XuFw63hIO/9MNNinLmxQDpVa+7kTOa9/m+tGWT1SmSYpQ9uTBGa6Hw;iat-mode=0',password='\0')
+#            s.set_proxy(socks.SOCKS5, addr, port, username='cert=sjVM7v2cpvtw4GLWaP+TEVUeEhld07iGa8AqEYQk3IHIbtr0Rpiqw6weoKMcnZEZ1+pmFQ')
             s.connect(("209.148.46.65", 443))   # TODO: DONT HARDCODE THIS
         except socks.ProxyConnectionError as e:
             logger.error( 'cannot connect to proxy: %s' % e )
             time.sleep(200)
             proc.kill()
             return None
-        #s.sendall("GET / HTTP/1.1 ...")
-        #print(s.recv(4096))
 
-        return s
-#        proc.kill()
+        return s                          # all's good
         
     except FileNotFoundError as e:
         logger.error( 'error launching PT: %s', e )
@@ -146,19 +144,22 @@ def launch_client_listener_service( pt_sock ):
         s = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
         s.bind( ('localhost', 0))
         port = s.getsockname()[1]
-        logger.info( 'bound on port %d' % port )
+        logger.info( 'pt-proxy.py is bound on port %d (set your proxy to be localhost:%d)' % (port,port) )
 
         connected_clients = []
         
         while True:
-            rlist = [s] + connected_clients
-            (rready, _, _) = select.select( rlist, _, _ )
-            if s in rready:
+            rlist = [s,pt_sock] + connected_clients
+            (rready, _, _) = select.select( rlist, [], [] )
+            if s in rready:               # we have a connecting client
                 (clientsocket, address) = s.accept()
                 logger.info( 'connection opened from %s' % address )
                 connected_clients += [clientsocket]
+            if pt_sock in rready:         # there's data from the PT
+                data = pt_sock.read()
+                c.write(data)
             for c in connected_clients:
-                if c in rready:
+                if c in rready:           # there's data from the browser
                     data = c.read()
                     pt_sock.write(data)
                     
