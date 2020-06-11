@@ -25,9 +25,9 @@ import socks
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-c', '--client', dest='clientmode', action='store_true', help='run in client mode')
-    group.add_argument('-s', '--server', dest='servermode', action='store_true', help='run in server mode')
+#    group = parser.add_mutually_exclusive_group(required=True)
+#    group.add_argument('-c', '--client', dest='clientmode', action='store_true', help='run in client mode')
+#    group.add_argument('-s', '--server', dest='servermode', action='store_true', help='run in server mode')
     
     parser.add_argument(
         '-l', '--logfile',
@@ -47,45 +47,36 @@ def parse_args():
         help='pluggable transport type (defaults to obfs4)',
         default='obfs4'
         )
-    parser.add_argument(
+
+    subparsers = parser.add_subparsers(help='sub-command help', dest='command')
+    parser_client = subparsers.add_parser('client', help='client help')
+    parser_server = subparsers.add_parser('server', help='server help')
+    parser_client.add_argument(
         '-B', '--bridge',
         dest='bridge',
-        help='for client mode: IP and port of a remote bridge (e.g., 1.2.3.4:443)',
-        )
-    parser.add_argument(
-        '-S', '--bind',
-        dest='bind',
-        help='for server mode: IP and port to bind to (e.g., 1.2.3.4:443)',
-        )
-    parser.add_argument(
-        '-p', '--port',
-        dest='port',
-        help='for server mode: port of locally running proxy (e.g., tinyproxy)',
-        type=int,
-        default=8080,
-        )
-    parser.add_argument(
+        help='IP and port of a remote bridge (e.g., 1.2.3.4:443)',
+        required=True
+    )
+    parser_client.add_argument(
         '-i', '--info',
         dest='bridgeinfo',
         help='bridge-specific information (e.g., cert=ssH+9rP8dG2NLDN2XuFw63hIO/9MNNinLmxQDpVa+7kTOa9/m+tGWT1SmSYpQ9uTBGa6Hw;iat-mode=0).  You should probably escape this argument.',
-        required=True
+        )
+    
+    parser_server.add_argument(
+        '-S', '--bind',
+        dest='bind',
+        help='IP and port to bind to (e.g., 1.2.3.4:443)',
+        )
+    parser_server.add_argument(
+        '-p', '--port',
+        dest='port',
+        help='port of locally running proxy (e.g., tinyproxy)',
+        type=int,
+        default=8080,
         )
 
     args = parser.parse_args()
-
-    # some additional checks
-    if args.clientmode is True and args.bridge is None:
-        print( 'client mode requires bridge (--bridge) to be specified' )
-        exit(1)
-    if args.servermode is True:
-        if args.bind is None:
-            print( 'server mode requires binding address (-S) to be specified' )
-            exit(1)
-        if args.port is None:
-            print( 'server mode requires port (-p) to be specified' )
-            exit(1)
-            
-
     return args
 
 
@@ -104,8 +95,6 @@ def launch_pt_binary( args ):
     global proc
     logger = logging.getLogger('pt-proxy-client')        
 
-    (bridge_ip,bridge_port) = args.bridge.split(':')
-
     logger.info( 'launch PT client' )
     tmpdir = tempfile.mkdtemp()
     logger.info( 'PT will keep state in %s', tmpdir )
@@ -114,13 +103,12 @@ def launch_pt_binary( args ):
     os.environ['TOR_PT_STATE_LOCATION'] = tmpdir
     os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
 
-    if args.clientmode:
+    if args.command == 'client':
         os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
-    if args.servermode:
+    if args.command == 'server':
         os.environ['TOR_PT_SERVER_TRANSPORTS'] = args.pttype
-        os.environ['TOR_PT_SERVER_TRANSPORT_OPTIONS'] = '%s:%s' % (args.pttype,args.bridgeinfo)
         os.environ['TOR_PT_SERVER_BINDADDR'] = "%s-%s" % (args.pttype,args.bind)
-        os.environ['TOR_PT_ORPORT' = '127.0.0.1:%d' % args.port
+        os.environ['TOR_PT_ORPORT'] = '127.0.0.1:%d' % args.port
 
     try:
         proc = subprocess.Popen(
@@ -132,51 +120,56 @@ def launch_pt_binary( args ):
             stdin = subprocess.DEVNULL,
             stdout = subprocess.PIPE,
             stderr = subprocess.PIPE,
-            bufsize = 1                   # line buffered
+#            bufsize = 1                   # line buffered
             )
 
-        # TODO: update this logic... seems to be client specific
-        try:
-            # read from PT to get CMETHOD output (written to its stdout)
-            # and then parse output to get correct port
-            if b'VERSION 1' not in proc.stdout.readline(): raise PTConnectError('wrong version')
-            method = proc.stdout.readline()
-            m = re.search(b'CMETHOD (.*) (.*) (.*):([0-9]+)\n', method, re.MULTILINE)
-            if not m: raise PTConnectError('could not find proxy port and IP from PT: %s' % out )
-            transport = m.group(1).decode()
-            proto = m.group(2).decode()
-            addr = m.group(3).decode()
-            port = int(m.group(4).decode())
-            if proto != "socks5": raise PTConnectError( 'I only know how to speak socks5, not %s' % proto )
-            if transport != args.pttype: raise PTConnectError( 'invalid PT type: %s vs %s', transport, args.pttype )
-        except PTConnectError as e:
-            logger.error( 'could not connect to PT SOCKS proxy: %s' % e )
-            proc.kill()
+        if args.command == 'server':
+            logger.info( 'spawned PT client in server mode.  you may want to look in %s for the cert' % tmpdir )
             return None
+            
+        if args.command == 'client':
+            try:
+                # read from PT to get CMETHOD output (written to its stdout)
+                # and then parse output to get correct port
+                if b'VERSION 1' not in proc.stdout.readline(): raise PTConnectError('wrong version')
+                method = proc.stdout.readline()
+                m = re.search(b'CMETHOD (.*) (.*) (.*):([0-9]+)\n', method, re.MULTILINE)
+                if not m: raise PTConnectError('could not find proxy port and IP from PT: %s' % out )
+                transport = m.group(1).decode()
+                proto = m.group(2).decode()
+                addr = m.group(3).decode()
+                port = int(m.group(4).decode())
+                if proto != "socks5": raise PTConnectError( 'I only know how to speak socks5, not %s' % proto )
+                if transport != args.pttype: raise PTConnectError( 'invalid PT type: %s vs %s', transport, args.pttype )
+            except PTConnectError as e:
+                logger.error( 'could not connect to PT SOCKS proxy: %s' % e )
+                proc.kill()
+                return None
         
-        logger.info( 'PT is running %s on %s:%d' % (proto,addr,port) )
+            logger.info( 'PT is running %s on %s:%d' % (proto,addr,port) )
         
-        s = socks.socksocket()
-        try:
-            # authenticate to PT bridge
-            s.set_proxy(socks.SOCKS5, addr, port, username=args.bridgeinfo, password='\0')
-            logger.info( 'authenticated to PT bridge' )
-            logger.info( 'connecting to bridge (%s,%s)' % (bridge_ip,bridge_port) )
-            s.connect((bridge_ip, int(bridge_port))) 
-        except socks.ProxyConnectionError as e:
-            logger.error( 'cannot connect to proxy: %s' % e )
-            time.sleep(200)
-            proc.kill()
-            return None
-        except socks.GeneralProxyError as e:
-            logger.error( 'cannot connect to proxy: %s' % e )
-            time.sleep(200)
-            proc.kill()
-            return None
+            s = socks.socksocket()
+            try:
+                # authenticate to PT bridge
+                (bridge_ip,bridge_port) = args.bridge.split(':')
+                s.set_proxy(socks.SOCKS5, addr, port, username=args.bridgeinfo, password='\0')
+                logger.info( 'authenticated to PT bridge' )
+                logger.info( 'connecting to bridge (%s,%s)' % (bridge_ip,bridge_port) )
+                s.connect((bridge_ip, int(bridge_port))) 
+            except socks.ProxyConnectionError as e:
+                logger.error( 'cannot connect to proxy: %s' % e )
+                time.sleep(200)
+                proc.kill()
+                return None
+            except socks.GeneralProxyError as e:
+                logger.error( 'cannot connect to proxy: %s' % e )
+                time.sleep(200)
+                proc.kill()
+                return None
 
-        logger.info( 'connected to bridge (%s,%s)' % (bridge_ip,bridge_port) )
+            logger.info( 'connected to bridge (%s,%s)' % (bridge_ip,bridge_port) )
         
-        return s                          # all's good
+            return s                          # all's good
         
     except FileNotFoundError as e:
         logger.error( 'error launching PT: %s', e )
@@ -237,11 +230,11 @@ def main( args ):
     logger.info( "running with arguments: %s" % args )
     
     pt_sock = launch_pt_binary(args)
-    if pt_sock != None:
-        if args.clientmode is True:
-            launch_client_listener_service( pt_sock )
-        elif args.servermode is True:
-            logger.warn( 'server mode is not yet implemented' )   # TODO
+    if args.command == 'client':
+        launch_client_listener_service( pt_sock )
+    elif args.command == 'server':
+        logger.info( 'server mode activated. will wait here indefinitely.' )
+        while True: time.sleep(1)
 
     proc.kill()
     exit( 0 )                             # all's well that ends well
