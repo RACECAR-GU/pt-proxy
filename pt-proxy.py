@@ -44,6 +44,12 @@ def parse_args():
         help='pluggable transport type (defaults to obfs4)',
         default='obfs4'
         )
+    parser.add_argument(
+        '-d', '--ptdir',
+        dest='ptdir',
+        help='directory where PT can keep its state',
+        required=True
+        )
     
     subparsers = parser.add_subparsers(help='sub-command help', dest='command')
     parser_client = subparsers.add_parser('client', help='client help')
@@ -82,12 +88,6 @@ def parse_args():
         type=int,
         default=8080,
         )
-    parser_server.add_argument(
-        '-d', '--ptdir',
-        dest='ptdir',
-        help='directory where PT can keep its state',
-        required=True
-        )
 
     args = parser.parse_args()
     return args
@@ -110,22 +110,17 @@ def launch_pt_binary( args ):
 
     logger.info( 'launch PT client' )
     
-    state_loc = ""
-    
     if args.command == 'client':
         os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
-        state_loc = tempfile.mkdtemp()
-        logger.info( 'PT will keep state in %s', state_loc )
     if args.command == 'server':
         os.environ['TOR_PT_SERVER_TRANSPORTS'] = args.pttype
         os.environ['TOR_PT_SERVER_BINDADDR'] = "%s-%s" % (args.pttype,args.bind)
         os.environ['TOR_PT_ORPORT'] = '127.0.0.1:%d' % args.port
-        state_loc = args.ptdir
 
     os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
     os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
-    os.environ['TOR_PT_STATE_LOCATION'] = state_loc
-    logger.info( 'PT will keep state in %s', state_loc )
+    os.environ['TOR_PT_STATE_LOCATION'] = args.ptdir
+    logger.info( 'PT will keep state in %s', args.ptdir )
 
     try:
         proc = subprocess.Popen(
@@ -210,6 +205,7 @@ def launch_client_listener_service( pt_sock, port ):
         
         while True:
             if not connected:
+                logger.info( 'waiting for incoming connection' )
                 (client_socket, address) = s.accept()        
                 logger.info( 'connection opened from %s' % str(address) )
                 connected = True
@@ -217,14 +213,15 @@ def launch_client_listener_service( pt_sock, port ):
             rlist = [client_socket,pt_sock]
             (rready, _, _) = select.select( rlist, [], [] )
             if client_socket in rready:           # there's data from the browser
-                data = client_socket.recv(4096)
+                data = client_socket.recv(10240)
                 if len(data) == 0:
+                    logger.info( 'a client disconnected' )
                     client_socket.close()
                     connected = False
                     continue
                 pt_sock.send(data)
             if pt_sock in rready:         # there's data from the PT
-                data = pt_sock.recv(4096)
+                data = pt_sock.recv(10240)
                 client_socket.send(data)
                     
     except KeyboardInterrupt:
