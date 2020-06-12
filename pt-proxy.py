@@ -136,7 +136,7 @@ def launch_pt_binary( args ):
             )
 
         if args.command == 'server':
-            logger.info( 'spawned PT client in server mode.  you may want to look in the "%s" directory for the cert' % state_loc )
+            logger.info( 'spawned PT client in server mode.  you may want to look in the "%s" directory for the cert' % args.ptdir )
             return (None,None)
             
         if args.command == 'client':
