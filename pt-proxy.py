@@ -101,12 +101,13 @@ class PTConnectError(Exception):
 
 
 """
-launches the Tor Pluggable Transport and returns a filehandle to be
-used to communicate with the other endpoint
+launches the Tor Pluggable Transport.
+if running in client mode, returns the address (probably always localhost)
+and port to use to connect to the PT's SOCKS instance
 """
 def launch_pt_binary( args ):
     global proc
-    logger = logging.getLogger('pt-proxy-client')        
+    logger = logging.getLogger('pt-proxy')        
 
     logger.info( 'launch PT client' )
     
@@ -136,7 +137,7 @@ def launch_pt_binary( args ):
 
         if args.command == 'server':
             logger.info( 'spawned PT client in server mode.  you may want to look in the "%s" directory for the cert' % state_loc )
-            return None
+            return (None,None)
             
         if args.command == 'client':
             try:
@@ -155,37 +156,41 @@ def launch_pt_binary( args ):
             except PTConnectError as e:
                 logger.error( 'could not connect to PT SOCKS proxy: %s' % e )
                 proc.kill()
-                return None
+                exit(1)
         
             logger.info( 'PT is running %s on %s:%d' % (proto,addr,port) )
-        
-            s = socks.socksocket()
-            try:
-                # authenticate to PT bridge
-                (bridge_ip,bridge_port) = args.bridge.split(':')
-                s.set_proxy(socks.SOCKS5, addr, port, username=args.bridgeinfo, password='\0')
-                logger.info( 'authenticated to PT bridge' )
-                logger.info( 'connecting to bridge (%s,%s)' % (bridge_ip,bridge_port) )
-                s.connect((bridge_ip, int(bridge_port))) 
-            except socks.ProxyConnectionError as e:
-                logger.error( 'cannot connect to proxy: %s' % e )
-                time.sleep(200)
-                proc.kill()
-                return None
-            except socks.GeneralProxyError as e:
-                logger.error( 'cannot connect to proxy: %s' % e )
-                time.sleep(200)
-                proc.kill()
-                return None
-
-            logger.info( 'connected to bridge (%s,%s)' % (bridge_ip,bridge_port) )
-        
-            return s                          # all's good
+            return (addr, port)
         
     except FileNotFoundError as e:
         logger.error( 'error launching PT: %s', e )
         exit(1)
         
+
+        
+"""
+connects to an already running local PT (via its SOCKS5 protocol)
+"""
+def connect_to_client_pt( addr, port, args ):
+    logger = logging.getLogger('pt-proxy')        
+    s = socks.socksocket()
+    try:
+        # authenticate to PT bridge
+        (bridge_ip,bridge_port) = args.bridge.split(':')
+        s.set_proxy(socks.SOCKS5, addr, port, username=args.bridgeinfo, password='\0')
+        logger.info( 'authenticated to PT bridge' )
+        logger.info( 'connecting to bridge (%s,%s)' % (bridge_ip,bridge_port) )
+        s.connect((bridge_ip, int(bridge_port))) 
+    except socks.ProxyConnectionError as e:
+        logger.error( 'cannot connect to proxy: %s' % e )
+        proc.kill()
+        return None
+    except socks.GeneralProxyError as e:
+        logger.error( 'cannot connect to proxy: %s' % e )
+        proc.kill()
+        return None
+
+    logger.info( 'connected to bridge (%s,%s)' % (bridge_ip,bridge_port) )
+    return s                          # all's good
 
 
     
@@ -193,39 +198,68 @@ def launch_pt_binary( args ):
 listen on a local port, and relay all communication sent to/from
 this port to our PT
 """
-def launch_client_listener_service( pt_sock, port ):
-    logger = logging.getLogger('pt-proxy-client')        
+def launch_client_listener_service( pt_addr, pt_port, args ):
+    logger = logging.getLogger('pt-proxy')        
     try:
-        s = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
-        s.bind( ('localhost', port))
-        logger.info( 'pt-proxy.py is bound on port %d (set your proxy to be localhost:%d)' % (port,port) )
-        s.listen(1)
+        server_socket = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
+        server_socket.bind( ('localhost', args.port))
+        logger.info( 'pt-proxy.py is bound on port %d (set your proxy to be localhost:%d)' % (args.port,args.port) )
+        server_socket.listen(1)
 
-        connected = False
+        pt_socks = []
+        client_socks = []
+        client_to_PT_map = dict()
+        PT_to_client_map = dict()
         
         while True:
-            if not connected:
-                logger.info( 'waiting for incoming connection' )
-                (client_socket, address) = s.accept()        
-                logger.info( 'connection opened from %s' % str(address) )
-                connected = True
-            
-            rlist = [client_socket,pt_sock]
+            # wait until something happens
+            rlist = [server_socket] + pt_socks + client_socks
             (rready, _, _) = select.select( rlist, [], [] )
-            if client_socket in rready:           # there's data from the browser
-                data = client_socket.recv(10240)
-                if len(data) == 0:
-                    logger.info( 'a client disconnected' )
-                    client_socket.close()
-                    connected = False
-                    continue
-                pt_sock.send(data)
-            if pt_sock in rready:         # there's data from the PT
-                data = pt_sock.recv(10240)
-                client_socket.send(data)
-                    
+
+            if server_socket in rready:   # a new connection to our local "server"
+                (client_socket, address) = server_socket.accept()        
+                logger.info( 'connection opened from %s' % str(address) )
+                # open a new connection to the PT
+                pt_sock = connect_to_client_pt( pt_addr, pt_port, args )
+                # associate the client socket to the PT socket
+                client_to_PT_map[client_socket] = pt_sock
+                PT_to_client_map[pt_sock] = client_socket
+                client_socks += [client_socket]
+                pt_socks += [pt_sock]
+
+            # check if we have anything arriving from the PT
+            for pt_sock in pt_socks:
+                if pt_sock in rready:
+                    client_sock = PT_to_client_map[pt_sock]
+                    data = pt_sock.recv(512)
+                    if len(data) == 0:
+                        logger.info( 'PT closed its connection' )
+                        client_sock.close()
+                        pt_sock.close()
+                        client_socks.remove(client_sock)
+                        pt_socks.remove(pt_sock)
+                        del client_to_PT_map[client_sock]
+                        del PT_to_client_map[pt_sock]
+                    else:
+                        client_sock.send(data)
+
+            # check if we have anything arriving from our local "server"
+            for client_sock in client_socks:
+                if client_sock in rready:
+                    pt_sock = client_to_PT_map[client_sock]
+                    data = client_sock.recv(512)
+                    if len(data) == 0:
+                        logger.info( 'local process closed its connection' )                        
+                        client_sock.close()
+                        pt_sock.close()
+                        client_socks.remove(client_sock)
+                        pt_socks.remove(pt_sock)
+                        del client_to_PT_map[client_sock]
+                        del PT_to_client_map[pt_sock]
+                    else:
+                        pt_sock.send(data)
+                                        
     except KeyboardInterrupt:
-        s.close()
         return
 
   
@@ -241,14 +275,14 @@ def main( args ):
             logging.FileHandler(args.logfile),
             logging.StreamHandler()]
         )
-    logger = logging.getLogger('pt-proxy-client')
+    logger = logging.getLogger('pt-proxy')
     logging.Formatter.converter = time.gmtime   # use GMT
 
     logger.info( "running with arguments: %s" % args )
     
-    pt_sock = launch_pt_binary(args)
+    (pt_addr,pt_port) = launch_pt_binary(args)
     if args.command == 'client':
-        launch_client_listener_service( pt_sock, args.port )
+        launch_client_listener_service( pt_addr, pt_port, args )
     elif args.command == 'server':
         logger.info( 'server mode activated. will wait here indefinitely.' )
         while True: time.sleep(1)
