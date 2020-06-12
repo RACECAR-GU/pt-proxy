@@ -110,20 +110,22 @@ def launch_pt_binary( args ):
 
     logger.info( 'launch PT client' )
     
-    os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
-    os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
-
+    state_loc = ""
+    
     if args.command == 'client':
         os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
-        tmpdir = tempfile.mkdtemp()
-        os.environ['TOR_PT_STATE_LOCATION'] = tmpdir        
-        logger.info( 'PT will keep state in %s', tmpdir )
+        state_loc = tempfile.mkdtemp()
+        logger.info( 'PT will keep state in %s', state_loc )
     if args.command == 'server':
         os.environ['TOR_PT_SERVER_TRANSPORTS'] = args.pttype
         os.environ['TOR_PT_SERVER_BINDADDR'] = "%s-%s" % (args.pttype,args.bind)
         os.environ['TOR_PT_ORPORT'] = '127.0.0.1:%d' % args.port
-        os.environ['TOR_PT_STATE_LOCATION'] = args.ptdir
-        logger.info( 'PT will keep state in %s', args.ptdir )
+        state_loc = args.ptdir
+
+    os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
+    os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
+    os.environ['TOR_PT_STATE_LOCATION'] = state_loc
+    logger.info( 'PT will keep state in %s', state_loc )
 
     try:
         proc = subprocess.Popen(
@@ -138,7 +140,7 @@ def launch_pt_binary( args ):
             )
 
         if args.command == 'server':
-            logger.info( 'spawned PT client in server mode.  you may want to look in %s for the cert' % tmpdir )
+            logger.info( 'spawned PT client in server mode.  you may want to look in the "%s" directory for the cert' % state_loc )
             return None
             
         if args.command == 'client':
