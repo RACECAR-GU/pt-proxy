@@ -1,6 +1,9 @@
 # pt-proxy
 A socks5-based proxy that uses Tor Pluggible Transports, without Tor
 
+This is written by Micah Sherr <msherr@cs.georgetown.edu>.  You should blame him for all mistakes and errors.  That said, this software is released without any warrantees of any kind.
+
+Also, PLEASE don't use this an expect to get any censorship-resistance or anonymity.  Use [Tor](https://torproject.org) instead.
 
 ## Usage
 
