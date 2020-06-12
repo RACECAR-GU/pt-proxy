@@ -25,10 +25,7 @@ import socks
 def parse_args():
     parser = argparse.ArgumentParser()
 
-#    group = parser.add_mutually_exclusive_group(required=True)
-#    group.add_argument('-c', '--client', dest='clientmode', action='store_true', help='run in client mode')
-#    group.add_argument('-s', '--server', dest='servermode', action='store_true', help='run in server mode')
-    
+    # arguments for both client and server mode
     parser.add_argument(
         '-l', '--logfile',
         dest="logfile",
@@ -47,10 +44,12 @@ def parse_args():
         help='pluggable transport type (defaults to obfs4)',
         default='obfs4'
         )
-
+    
     subparsers = parser.add_subparsers(help='sub-command help', dest='command')
     parser_client = subparsers.add_parser('client', help='client help')
     parser_server = subparsers.add_parser('server', help='server help')
+
+    # client-mode arguments
     parser_client.add_argument(
         '-B', '--bridge',
         dest='bridge',
@@ -69,7 +68,8 @@ def parse_args():
         type=int,
         default=9999,
         )
-    
+
+    # server-mode arguments
     parser_server.add_argument(
         '-S', '--bind',
         dest='bind',
@@ -81,6 +81,12 @@ def parse_args():
         help='port of locally running proxy (e.g., tinyproxy)',
         type=int,
         default=8080,
+        )
+    parser_server.add_argument(
+        '-d', '--ptdir',
+        dest='ptdir',
+        help='directory where PT can keep its state',
+        required=True
         )
 
     args = parser.parse_args()
@@ -103,19 +109,21 @@ def launch_pt_binary( args ):
     logger = logging.getLogger('pt-proxy-client')        
 
     logger.info( 'launch PT client' )
-    tmpdir = tempfile.mkdtemp()
-    logger.info( 'PT will keep state in %s', tmpdir )
     
     os.environ['TOR_PT_MANAGED_TRANSPORT_VER'] = '1'
-    os.environ['TOR_PT_STATE_LOCATION'] = tmpdir
     os.environ['TOR_PT_EXIT_ON_STDIN_CLOSE'] = '0'
 
     if args.command == 'client':
         os.environ['TOR_PT_CLIENT_TRANSPORTS'] = args.pttype
+        tmpdir = tempfile.mkdtemp()
+        os.environ['TOR_PT_STATE_LOCATION'] = tmpdir        
+        logger.info( 'PT will keep state in %s', tmpdir )
     if args.command == 'server':
         os.environ['TOR_PT_SERVER_TRANSPORTS'] = args.pttype
         os.environ['TOR_PT_SERVER_BINDADDR'] = "%s-%s" % (args.pttype,args.bind)
         os.environ['TOR_PT_ORPORT'] = '127.0.0.1:%d' % args.port
+        os.environ['TOR_PT_STATE_LOCATION'] = args.ptdir
+        logger.info( 'PT will keep state in %s', args.ptdir )
 
     try:
         proc = subprocess.Popen(
@@ -127,7 +135,6 @@ def launch_pt_binary( args ):
             stdin = subprocess.DEVNULL,
             stdout = subprocess.PIPE,
             stderr = subprocess.PIPE,
-#            bufsize = 1                   # line buffered
             )
 
         if args.command == 'server':
@@ -197,15 +204,22 @@ def launch_client_listener_service( pt_sock, port ):
         logger.info( 'pt-proxy.py is bound on port %d (set your proxy to be localhost:%d)' % (port,port) )
         s.listen(1)
 
-        # TODO: fix this.  need to cycle back after connection closes
-        (client_socket, address) = s.accept()        
-        logger.info( 'connection opened from %s' % str(address) )
+        connected = False
         
         while True:
+            if not connected:
+                (client_socket, address) = s.accept()        
+                logger.info( 'connection opened from %s' % str(address) )
+                connected = True
+            
             rlist = [client_socket,pt_sock]
             (rready, _, _) = select.select( rlist, [], [] )
             if client_socket in rready:           # there's data from the browser
                 data = client_socket.recv(4096)
+                if len(data) == 0:
+                    client_socket.close()
+                    connected = False
+                    continue
                 pt_sock.send(data)
             if pt_sock in rready:         # there's data from the PT
                 data = pt_sock.recv(4096)
