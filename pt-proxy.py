@@ -177,8 +177,8 @@ def connect_to_client_pt( addr, port, args ):
         # authenticate to PT bridge
         (bridge_ip,bridge_port) = args.bridge.split(':')
         s.set_proxy(socks.SOCKS5, addr, port, username=args.bridgeinfo, password='\0')
-        logger.info( 'authenticated to PT bridge' )
-        logger.info( 'connecting to bridge (%s,%s)' % (bridge_ip,bridge_port) )
+        logger.debug( 'authenticated to PT bridge' )
+        logger.debug( 'connecting to bridge (%s,%s)' % (bridge_ip,bridge_port) )
         s.connect((bridge_ip, int(bridge_port))) 
     except socks.ProxyConnectionError as e:
         logger.error( 'cannot connect to proxy: %s' % e )
@@ -189,7 +189,7 @@ def connect_to_client_pt( addr, port, args ):
         proc.kill()
         return None
 
-    logger.info( 'connected to bridge (%s,%s)' % (bridge_ip,bridge_port) )
+    logger.debug( 'connected to bridge (%s,%s)' % (bridge_ip,bridge_port) )
     return s                          # all's good
 
 
@@ -218,7 +218,7 @@ def launch_client_listener_service( pt_addr, pt_port, args ):
 
             if server_socket in rready:   # a new connection to our local "server"
                 (client_socket, address) = server_socket.accept()        
-                logger.info( 'connection opened from %s' % str(address) )
+                logger.debug( 'connection opened from %s' % str(address) )
                 # open a new connection to the PT
                 pt_sock = connect_to_client_pt( pt_addr, pt_port, args )
                 # associate the client socket to the PT socket
@@ -233,7 +233,7 @@ def launch_client_listener_service( pt_addr, pt_port, args ):
                     client_sock = PT_to_client_map[pt_sock]
                     data = pt_sock.recv(512)
                     if len(data) == 0:
-                        logger.info( 'PT closed its connection' )
+                        logger.debug( 'PT closed its connection' )
                         client_sock.close()
                         pt_sock.close()
                         client_socks.remove(client_sock)
@@ -249,7 +249,7 @@ def launch_client_listener_service( pt_addr, pt_port, args ):
                     pt_sock = client_to_PT_map[client_sock]
                     data = client_sock.recv(512)
                     if len(data) == 0:
-                        logger.info( 'local process closed its connection' )                        
+                        logger.debug( 'local process closed its connection' )                        
                         client_sock.close()
                         pt_sock.close()
                         client_socks.remove(client_sock)
