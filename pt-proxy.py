@@ -247,18 +247,27 @@ def launch_client_listener_service( pt_addr, pt_port, args ):
             for client_sock in client_socks:
                 if client_sock in rready:
                     pt_sock = client_to_PT_map[client_sock]
-                    data = client_sock.recv(512)
-                    if len(data) == 0:
-                        logger.debug( 'local process closed its connection' )                        
-                        client_sock.close()
-                        pt_sock.close()
-                        client_socks.remove(client_sock)
-                        pt_socks.remove(pt_sock)
-                        del client_to_PT_map[client_sock]
-                        del PT_to_client_map[pt_sock]
-                    else:
-                        pt_sock.send(data)
-                                        
+                    try:
+                        data = client_sock.recv(512)
+                        if len(data) == 0:
+                            logger.debug( 'local process closed its connection' )                        
+                            client_sock.close()
+                            pt_sock.close()
+                            client_socks.remove(client_sock)
+                            pt_socks.remove(pt_sock)
+                            del client_to_PT_map[client_sock]
+                            del PT_to_client_map[pt_sock]
+                        else:
+                            pt_sock.send(data)
+                    except ConnectionResetError:
+                            logger.debug( 'local process reset its connection' )                        
+                            pt_sock.close()
+                            client_socks.remove(client_sock)
+                            pt_socks.remove(pt_sock)
+                            del client_to_PT_map[client_sock]
+                            del PT_to_client_map[pt_sock]
+
+                        
     except KeyboardInterrupt:
         return
 
