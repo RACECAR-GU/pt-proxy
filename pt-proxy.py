@@ -127,7 +127,7 @@ def launch_pt_binary( args ):
         proc = subprocess.Popen(
             [
                 args.ptbinary,
-                "-enableLogging",
+                "-enableLogging", "false",
                 "-logLevel", "DEBUG",
             ],
             stdin = subprocess.DEVNULL,
